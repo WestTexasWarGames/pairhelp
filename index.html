@@ -91,15 +91,19 @@
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, query, where, writeBatch, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global Firebase variables provided by the environment
+        // =================================================================================
+        // REVERTED TO CANVAS-SPECIFIC ENVIRONMENT VARIABLES
+        // =================================================================================
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
         const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        // =================================================================================
 
         let db;
         let auth;
         let userId = 'loading';
         let isAuthReady = false;
+        // The Firestore path must match the structure defined in your security rules
         const DOCUMENT_PATH = `/artifacts/${appId}/public/data/tournamentData/pairings`;
 
         // --- Team and Table definitions ---
@@ -540,7 +544,7 @@
                 // 2. Set Auth Persistence (optional but good practice)
                 setPersistence(auth, browserSessionPersistence);
 
-                // 3. Authenticate User
+                // 3. Authenticate User (Canvas-specific logic)
                 onAuthStateChanged(auth, async (user) => {
                     if (!user) {
                         // Sign in using the custom token or anonymously if token is missing
