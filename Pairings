@@ -1,0 +1,576 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>40k Pairings Helper</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for better readability and mobile experience */
+        .container-fluid {
+            padding: 1rem;
+        }
+        .table-cell {
+            padding: 0.5rem;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            text-align: center;
+            user-select: none; /* Prevents text selection on rapid tapping */
+            touch-action: none; /* FIX: Prevents unwanted scroll/pan behavior on touch devices */
+        }
+        .input-cell {
+            padding: 0.25rem 0.5rem;
+            border-radius: 0.375rem; /* rounded-md */
+            border: 1px solid #374151; /* gray-700 */
+            width: 100%;
+            font-size: 0.875rem; /* text-sm */
+        }
+        /* Mobile-friendly table layout adjustment */
+        @media (max-width: 640px) {
+            .table-responsive {
+                overflow-x: auto;
+            }
+            .table-responsive table {
+                min-width: 600px; /* Ensures columns don't compress too much */
+            }
+        }
+    </style>
+</head>
+<body class="bg-gray-900 min-h-screen text-gray-100 font-sans">
+
+    <div id="app" class="container-fluid max-w-7xl mx-auto py-8">
+        <h1 class="text-3xl font-extrabold text-center mb-6 text-indigo-400">
+            40k Pairings Helper
+        </h1>
+        <p class="text-center text-gray-400 mb-8">
+            Click on any pairing cell to cycle through the match status (Strong, Neutral, Weak). Edit the Opponent Name and Army in the table header rows.
+        </p>
+
+        <!-- Loading & Status -->
+        <div id="loading-indicator" class="text-center text-lg font-medium text-indigo-400 hidden">
+            <svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-indigo-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            Loading Data...
+        </div>
+
+        <!-- Tab Navigation for Tables -->
+        <div class="overflow-x-auto bg-gray-800 p-2 rounded-lg shadow-lg mb-6">
+            <div id="tab-container" class="flex space-x-2 whitespace-nowrap">
+                <!-- Tabs will be rendered here by JS -->
+            </div>
+        </div>
+
+        <!-- Table Content -->
+        <div id="tables-container" class="bg-gray-800 p-6 rounded-lg shadow-xl">
+            <!-- Table will be rendered here by JS -->
+        </div>
+
+        <!-- Message Box (Instead of alert()) -->
+        <div id="message-box" class="fixed inset-0 bg-gray-900 bg-opacity-70 flex items-center justify-center z-50 hidden">
+            <div class="bg-gray-800 p-6 rounded-lg shadow-2xl w-80 text-gray-100">
+                <h3 class="text-xl font-bold mb-3 text-red-400">Error</h3>
+                <p id="message-text" class="mb-4 text-gray-300"></p>
+                <button onclick="document.getElementById('message-box').classList.add('hidden')" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2 rounded-lg">
+                    Close
+                </button>
+            </div>
+        </div>
+        
+        <!-- User ID Display for Collaboration (MOVED TO BOTTOM) -->
+        <div id="user-info" class="text-center text-sm font-mono p-2 bg-gray-800 rounded-lg mt-6 hidden">
+            User ID: <span id="user-id-display" class="font-bold text-indigo-400 break-all"></span>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, setPersistence, browserSessionPersistence } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, query, where, writeBatch, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Firebase variables provided by the environment
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let db;
+        let auth;
+        let userId = 'loading';
+        let isAuthReady = false;
+        const DOCUMENT_PATH = `/artifacts/${appId}/public/data/tournamentData/pairings`;
+
+        // --- Team and Table definitions ---
+        const TEAM_MEMBERS = ['Aaron', 'Cody', 'Mike', 'John', 'Christian'];
+        
+        const TABLE_NAMES = [
+            '<3<3',
+            'Barnhammer 2',
+            'Barnhammer 3',
+            'Barnhammer Alpha Strike',
+            'Bingo Bongo Bois',
+            'Crimson Lion Games',
+            'Last Minute Legend',
+            'Mercenaries',
+            'Pactbound & Gagged',
+            'Pactbound Twink Death',
+            'Nope Zone'
+        ];
+
+        // Mapped opponent data from user input. Keys match TABLE_NAMES.
+        // Array lengths are normalized to 5 for column consistency.
+        const OPPONENT_DATA_MAP = {
+            '<3<3': [
+                { name: 'Adam Germain - <3<3', army: "T'au Empire" },
+                { name: 'Andrew Nikiel - <3<3', army: "World Eaters" },
+                { name: 'Jonathan Nikiel', army: "Black Templars" },
+                { name: 'Layla Nikiel', army: "Imperial Knights" },
+                { name: 'Todd Germain - <3<3', army: "Orks" }
+            ],
+            'Barnhammer 2': [
+                { name: 'Aaron Cook - Barnhammer', army: "Chaos Daemons" },
+                { name: 'Jacob Causer', army: "Space Marines (Astartes)" },
+                { name: 'Jacob Pinoli - Barnhammer', army: "Imperial Knights" },
+                { name: 'Josef Johnson', army: "Death Guard" },
+                { name: 'Victor Bradley', army: "Drukhari" }
+            ],
+            'Barnhammer 3': [
+                { name: 'Anthony Musella', army: "Space Marines (Astartes)" },
+                { name: 'Dillon White - Barnhammer', army: "T'au Empire" },
+                { name: 'Jason Hill', army: "Chaos Knights" },
+                { name: 'Justin Ledbetter - Ragnarok gaming', army: "Astra Militarum" },
+                { name: 'Tripp Graves - Barnhammer', army: "Leagues of Votann" }
+            ],
+            'Barnhammer Alpha Strike': [
+                { name: 'Derrick Ramsey - Barnhammer', army: "Chaos Daemons" },
+                { name: 'Hershel Callender - Barnhammer', army: "Death Guard" },
+                { name: 'Josh Archer - Barnhammer', army: "Necrons" },
+                { name: 'Kevin Spivey - Barnhammer', army: "Orks" },
+                { name: 'Matthew Gaddy - Barnhammer', army: "Leagues of Votann" }
+            ],
+            'Bingo Bongo Bois': [
+                { name: 'Cooper Green', army: "Chaos Knights" },
+                { name: 'Jonathan Merritt - Binky Bongo Bois', army: "Chaos Daemons" },
+                { name: 'Kaleb Reisner - Binky Bongo Bois', army: "World Eaters" },
+                { name: 'Li Castaneda - Binky Bongo Bois', army: "Orks" },
+                { name: 'Tom Drew', army: "Death Guard" }
+            ],
+            'Crimson Lion Games': [
+                { name: 'Alex Hernandez - Crimson Lion Games', army: "Space Marines (Astartes)" },
+                { name: 'Hunter Boyd - Crimson Lion Games', army: "Death Guard" },
+                { name: 'John Butler - Crimson Lion Games', army: "Chaos Knights" },
+                { name: 'Nate Pyle - Crimson Lion Games', army: "World Eaters" },
+                { name: 'Riley Short - Crimson Lion Games', army: "Orks" }
+            ],
+            'Last Minute Legend': [
+                { name: 'Adrian Mireles', army: "T'au Empire" },
+                { name: 'Brandon Harris - Pactbound', army: "Adeptus Mechanicus" },
+                { name: 'Garrett Smart - Chaotic stupid', army: "Emperor's Children" },
+                { name: 'Kassidy Brodbeck - Pactbound', army: "Adeptus Custodes" },
+                { name: 'Patrick M - Ask me about the Greater Good', army: "T'au Empire" }
+            ],
+            'Mercenaries': [
+                { name: 'Edward Boyer - Gamers Guild', army: "Space Marines (Astartes)" },
+                { name: 'Jacob Holt', army: "Imperial Knights" },
+                { name: 'Taylor Holmstedt - Gamers Guild', army: "Death Guard" },
+                { name: 'Trevor Kitten', army: "Necrons" },
+                { name: 'Opponent 5 (Missing Data)', army: "N/A" } // Padded
+            ],
+            'Pactbound & Gagged': [
+                { name: 'Christopher Thomson - Pactbound', army: "Death Guard" },
+                { name: 'Jakob Dearing - Pactbound', army: "Imperial Knights" },
+                { name: 'Michael Mckibben - Pactibound', army: "Aeldari" },
+                { name: 'Phil Montgomery - Pactbound', army: "Chaos Daemons" },
+                { name: 'Taylor Bivona - Pactbound', army: "Orks" }
+            ],
+            'Pactbound Twink Death': [
+                { name: 'Colton Parker - Pactbound', army: "World Eaters" },
+                { name: 'Dylan Criswell - Pactbound', army: "Sisters" },
+                { name: 'Matthew Sorrels - Pactbound', army: "Adeptus Mechanicus" },
+                { name: 'Parker Lewis - Pactbound', army: "Imperial Agents" },
+                { name: 'Sebastian Shelton - Pactbound', army: "Dark Angels" }
+            ],
+            'Nope Zone': [
+                { name: 'Anthony Molina - Throwing Rolls And Measuring Precise', army: "Blood Angels" },
+                { name: 'Connor Krode', army: "Tyranids" },
+                { name: 'Duell Beaty', army: "World Eaters" },
+                { name: 'Jacob Coats', army: "Chaos Daemons" },
+                { name: 'Kerry Shelton - Pactbound', army: "Necrons" }
+            ]
+        };
+        // --- End of Definitions ---
+
+        // --- Application State ---
+        let tournamentState = {
+            tables: []
+        };
+        let currentTableIndex = 0; // 0-indexed
+
+        // --- UI Elements ---
+        const tablesContainer = document.getElementById('tables-container');
+        const tabContainer = document.getElementById('tab-container');
+        const loadingIndicator = document.getElementById('loading-indicator');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const userInfo = document.getElementById('user-info');
+        const messageText = document.getElementById('message-text');
+        const messageBox = document.getElementById('message-box');
+
+        // --- Utility Functions ---
+
+        /**
+         * Shows a custom message box instead of window.alert
+         * @param {string} message The message to display.
+         */
+        const showMessage = (message) => {
+            messageText.textContent = message;
+            messageBox.classList.remove('hidden');
+        };
+
+        /**
+         * Escapes HTML special characters to prevent XSS.
+         * @param {string} str The string to escape.
+         * @returns {string} The escaped string.
+         */
+        const escapeHTML = (str) => {
+            if (!str) return '';
+            return str.replace(/[&<>"']/g, function(m) {
+                return {
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;',
+                    "'": '&#039;'
+                }[m];
+            });
+        };
+
+        /**
+         * Converts a color index (0-3) to Tailwind CSS classes and status text.
+         * @param {number} index The color index (0: Default, 1: Green, 2: Yellow, 3: Red).
+         * @returns {{classes: string, text: string}} The CSS classes and display text.
+         */
+        const getStatusData = (index) => {
+            // Check for mobile based on screen width (or use tailwind prefixes if rendering outside JS)
+            const isMobile = window.innerWidth < 640; 
+            
+            switch (index) {
+                case 1: 
+                    return { 
+                        classes: 'bg-green-500 text-white font-bold', 
+                        text: isMobile ? 'S' : 'STRONG' 
+                    }; 
+                case 2: 
+                    return { 
+                        classes: 'bg-yellow-400 font-bold text-gray-900', // Added text-gray-900 for dark mode contrast
+                        text: isMobile ? 'N' : 'NEUTRAL' 
+                    }; 
+                case 3: 
+                    return { 
+                        classes: 'bg-red-500 text-white font-bold',   
+                        text: isMobile ? 'W' : 'WEAK' 
+                    }; 
+                default: 
+                    return { 
+                        classes: 'bg-gray-800 hover:bg-gray-700',        
+                        text: '-' 
+                    };
+            }
+        };
+
+        // --- Firebase Core Logic ---
+
+        /**
+         * Creates the initial default tournament state based on TABLE_NAMES.
+         * Now uses the fixed opponent names and armies from OPPONENT_DATA_MAP.
+         * @returns {object} The initial state object.
+         */
+        const createInitialState = () => {
+            const tables = [];
+            TABLE_NAMES.forEach((name) => {
+                // Get the opponent objects for this table ID
+                const opponents = OPPONENT_DATA_MAP[name] || [
+                    { name: 'Opponent A', army: 'N/A' },
+                    { name: 'Opponent B', army: 'N/A' },
+                    { name: 'Opponent C', army: 'N/A' },
+                    { name: 'Opponent D', army: 'N/A' },
+                    { name: 'Opponent E', army: 'N/A' }
+                ];
+
+                tables.push({
+                    id: name, // Use the name as the ID
+                    opponents: opponents.slice(0, 5), // Ensure only 5 are used, each being {name, army}
+                    teamMembers: TEAM_MEMBERS.map(name => ({
+                        name: name,
+                        results: Array(5).fill(0) // 5 columns
+                    }))
+                });
+            });
+            return { tables: tables };
+        };
+
+        /**
+         * Saves the current tournament state to Firestore.
+         */
+        const saveState = async () => {
+            if (!db || !isAuthReady) {
+                console.error("Firestore not ready or user not authenticated.");
+                return;
+            }
+            try {
+                await setDoc(doc(db, DOCUMENT_PATH), tournamentState);
+                console.log("Tournament state saved successfully.");
+            } catch (error) {
+                console.error("Error saving document: ", error);
+                showMessage(`Error saving data: ${error.message}`);
+            }
+        };
+
+        /**
+         * Sets up the real-time listener for the tournament state.
+         */
+        const setupRealtimeListener = () => {
+            if (!db || !isAuthReady) {
+                return;
+            }
+
+            const docRef = doc(db, DOCUMENT_PATH);
+
+            onSnapshot(docRef, async (docSnap) => {
+                loadingIndicator.classList.add('hidden');
+
+                if (docSnap.exists() && docSnap.data().tables.length === TABLE_NAMES.length) {
+                    // Update state and render UI
+                    tournamentState = docSnap.data();
+                    console.log("Real-time state updated.");
+                    renderApp();
+                } else {
+                    // Data is missing or schema changed (e.g., number of tables)
+                    // Re-initialize the state and save it.
+                    console.log("No data found or table schema mismatch, initializing state.");
+                    tournamentState = createInitialState();
+                    await saveState(); // Save the new initial state
+                    renderApp();
+                }
+            }, (error) => {
+                console.error("Snapshot listener failed: ", error);
+                showMessage(`Real-time update error: ${error.message}`);
+            });
+            
+            // Re-render on window resize to switch between mobile/desktop status text
+            window.addEventListener('resize', renderApp);
+        };
+
+        // --- UI Interaction Logic ---
+
+        /**
+         * Toggles the color of a specific pairing cell and saves state.
+         * @param {Event} event The DOM event object.
+         * @param {number} tableIndex The index of the table (0-10).
+         * @param {number} rowIndex The index of the team member (0-4).
+         * @param {number} colIndex The index of the opponent (0-4).
+         */
+        window.toggleColor = (event, tableIndex, rowIndex, colIndex) => {
+            // CRITICAL FIX: Stop the default action to prevent unwanted scrolling on mobile
+            event.preventDefault();
+
+            const table = tournamentState.tables[tableIndex];
+            if (table) {
+                const member = table.teamMembers[rowIndex];
+                if (member) {
+                    // Cycle: 0 (Default) -> 1 (Green/Strong) -> 2 (Yellow/Neutral) -> 3 (Red/Weak) -> 0
+                    member.results[colIndex] = (member.results[colIndex] + 1) % 4;
+                    saveState();
+                }
+            }
+        };
+
+        /**
+         * Updates an opponent field (Name or Army) at a specific column and saves state.
+         * @param {number} tableIndex The index of the table (0-10).
+         * @param {number} colIndex The index of the opponent (0-4).
+         * @param {string} field The field to update ('name' or 'army').
+         * @param {string} value The new field value.
+         */
+        window.updateOpponentField = (tableIndex, colIndex, field, value) => {
+            const table = tournamentState.tables[tableIndex];
+            if (table && table.opponents && table.opponents[colIndex]) {
+                table.opponents[colIndex][field] = value;
+                saveState();
+            }
+        };
+
+        /**
+         * Changes the currently displayed table.
+         * @param {number} index The index of the table to display (0-10).
+         */
+        window.changeTable = (index) => {
+            currentTableIndex = index;
+            renderApp();
+        };
+
+        // --- UI Rendering ---
+
+        /**
+         * Renders the tab navigation based on the current state.
+         */
+        const renderTabs = () => {
+            tabContainer.innerHTML = '';
+            tournamentState.tables.forEach((table, index) => {
+                const button = document.createElement('button');
+                button.textContent = table.id;
+                button.className = `px-4 py-2 rounded-lg font-semibold transition-colors duration-150 ${
+                    index === currentTableIndex
+                        ? 'bg-indigo-500 text-white shadow-md'
+                        : 'bg-gray-700 text-gray-200 hover:bg-gray-600'
+                }`;
+                button.onclick = () => window.changeTable(index);
+                tabContainer.appendChild(button);
+            });
+        };
+
+        /**
+         * Renders the main pairings table for the currently selected table index.
+         */
+        const renderTable = () => {
+            const tableData = tournamentState.tables[currentTableIndex];
+            if (!tableData) {
+                tablesContainer.innerHTML = '<p class="text-center text-xl text-gray-500">No table data available.</p>';
+                return;
+            }
+
+            const { opponents, teamMembers } = tableData;
+            const escapedId = escapeHTML(tableData.id);
+
+            let html = `
+                <h2 class="text-2xl font-bold text-gray-300 mb-4">${escapedId} Pairings</h2>
+                <div class="table-responsive">
+                    <table class="w-full border-collapse border border-gray-700 rounded-lg shadow-inner">
+                        <thead class="text-white">
+                            <!-- OPPONENT NAME ROW -->
+                            <tr class="bg-indigo-900">
+                                <th class="p-3 border-r border-gray-700 text-left w-48">Team Player</th>
+                                ${opponents.map((opponent, colIndex) => `
+                                    <th class="p-2 border-r border-gray-700 text-sm">
+                                        <label for="opp-name-${currentTableIndex}-${colIndex}" class="sr-only">Opponent Name ${colIndex + 1}</label>
+                                        <input
+                                            id="opp-name-${currentTableIndex}-${colIndex}"
+                                            type="text"
+                                            class="input-cell bg-indigo-800 text-white placeholder-indigo-400"
+                                            placeholder="Opponent Name"
+                                            value="${escapeHTML(opponent.name) || ''}"
+                                            onchange="updateOpponentField(${currentTableIndex}, ${colIndex}, 'name', this.value)"
+                                        />
+                                    </th>
+                                `).join('')}
+                            </tr>
+                            <!-- OPPONENT ARMY ROW -->
+                            <tr class="bg-indigo-800">
+                                <th class="p-3 border-r border-gray-700 text-left w-48 font-light text-indigo-300">Opponent Army</th>
+                                ${opponents.map((opponent, colIndex) => `
+                                    <th class="p-2 border-r border-gray-700 text-sm">
+                                        <label for="opp-army-${currentTableIndex}-${colIndex}" class="sr-only">Opponent Army ${colIndex + 1}</label>
+                                        <input
+                                            id="opp-army-${currentTableIndex}-${colIndex}"
+                                            type="text"
+                                            class="input-cell bg-indigo-700 text-white placeholder-indigo-400 font-light"
+                                            placeholder="Army Faction"
+                                            value="${escapeHTML(opponent.army) || ''}"
+                                            onchange="updateOpponentField(${currentTableIndex}, ${colIndex}, 'army', this.value)"
+                                        />
+                                    </th>
+                                `).join('')}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${teamMembers.map((member, rowIndex) => `
+                                <tr class="border-t border-gray-700 hover:bg-gray-700 transition-colors">
+                                    <td class="p-3 border-r border-gray-700 font-semibold w-48">${member.name}</td>
+                                    ${member.results.map((result, colIndex) => {
+                                        const status = getStatusData(result);
+                                        return `
+                                            <td
+                                                class="table-cell border-r border-gray-700 ${status.classes}"
+                                                onclick="toggleColor(event, ${currentTableIndex}, ${rowIndex}, ${colIndex})"
+                                                title="Click to toggle result: 0:Default, 1:Strong, 2:Neutral, 3:Weak"
+                                            >
+                                                <span class="text-xs sm:text-base">${status.text}</span>
+                                            </td>
+                                        `;
+                                    }).join('')}
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+            tablesContainer.innerHTML = html;
+        };
+
+        /**
+         * Main function to render all UI components.
+         */
+        const renderApp = () => {
+            renderTabs();
+            renderTable();
+        };
+
+        // --- Initialization ---
+
+        window.onload = function () {
+            // Set up Firebase logging for debugging
+            setLogLevel('debug');
+
+            if (!firebaseConfig) {
+                console.error("Firebase configuration is missing.");
+                loadingIndicator.classList.add('hidden');
+                showMessage("Firebase configuration is missing. Cannot initialize application.");
+                return;
+            }
+
+            loadingIndicator.classList.remove('hidden');
+
+            try {
+                // 1. Initialize Firebase
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+
+                // 2. Set Auth Persistence (optional but good practice)
+                setPersistence(auth, browserSessionPersistence);
+
+                // 3. Authenticate User
+                onAuthStateChanged(auth, async (user) => {
+                    if (!user) {
+                        // Sign in using the custom token or anonymously if token is missing
+                        if (initialAuthToken) {
+                            await signInWithCustomToken(auth, initialAuthToken).catch(e => {
+                                console.error("Custom token sign-in failed, falling back to anonymous:", e);
+                                signInAnonymously(auth);
+                            });
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+
+                    // Once authenticated, get the user ID and proceed
+                    userId = auth.currentUser?.uid || crypto.randomUUID();
+                    userIdDisplay.textContent = userId;
+                    userInfo.classList.remove('hidden');
+                    isAuthReady = true;
+
+                    // 4. Set up Realtime Listener
+                    setupRealtimeListener();
+                });
+
+            } catch (error) {
+                console.error("Initialization Error:", error);
+                loadingIndicator.classList.add('hidden');
+                showMessage(`Initialization failed: ${error.message}`);
+            }
+        };
+
+    </script>
+</body>
+</html>
